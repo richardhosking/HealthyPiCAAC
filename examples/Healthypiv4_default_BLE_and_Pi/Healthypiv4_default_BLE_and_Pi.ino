@@ -1,8 +1,10 @@
-//////////////////////////////////////////////////////////////////////////////////////////
+/*/////////////////////////////////////////////////////////////////////////////////////////
 //   Basic Arduino program for HealthyPi v4 default function
 //
 //   Copyright (c) 2020 ProtoCentral
-
+//
+//   Modified by Richard Hosking Sept 2022
+// 
 //   Heartrate and respiration computation based on original code from Texas Instruments
 //
 //   This software is licensed under the MIT License(http://opensource.org/licenses/MIT).
@@ -13,7 +15,7 @@
 //   WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
 //   SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 //
-//////////////////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////////////////*/
 
 #include <SPI.h>
 #include <Wire.h>
@@ -22,14 +24,26 @@
 #include <ESPmDNS.h>
 #include <Update.h>
 #include <WiFiClient.h>
+
+// Filesystem Headers 
 #include "SPIFFS.h"
-#include <FS.h> //Include File System Headers
+#include <FS.h> 
+
+// Protocentral peripheral devices 
 #include "Protocentral_ADS1292r.h"
 #include "Protocentral_ecg_resp_signal_processing.h"
 #include "Protocentral_AFE4490_Oximeter.h"
+// Contact Thermometer
 #include "Protocentral_MAX30205.h"
 #include "Protocentral_spo2_algorithm.h"
+// IR Thermometer - not supplied with kit 
 #include "Protocentral_MLX90632.h"
+// New library IR Thermometer
+#include "Adafruit_MLX90614.h"
+
+// Bluetooth Libraries 
+// Note that these are Arduino ESP32 Version 1.0.6
+// the latest libraries broke the sketch
 #include <BLEDevice.h>
 #include <BLEServer.h>
 #include <BLEUtils.h>
@@ -37,6 +51,7 @@
 
 #include "arduinoFFT.h"
 
+// Bluetooth UUIDs
 #define Heartrate_SERVICE_UUID (uint16_t(0x180D))
 #define Heartrate_CHARACTERISTIC_UUID (uint16_t(0x2A37))
 #define sp02_SERVICE_UUID (uint16_t(0x1822))
@@ -50,6 +65,7 @@
 #define HRV_SERVICE_UUID "cd5c7491-4448-7db8-ae4c-d1da8cba36d0"
 #define HRV_CHARACTERISTIC_UUID "cd5ca86f-4448-7db8-ae4c-d1da8cba36d0"
 #define HIST_CHARACTERISTIC_UUID "cd5c1525-4448-7db8-ae4c-d1da8cba36d0"
+
 
 #define BLE_MODE 0X01
 #define WEBSERVER_MODE 0X02
@@ -71,8 +87,12 @@
 #define PPG_DATA 0X00
 #define RESP_DATA 0X01
 #define SENSOR_NOTFOUND 0xffff
+
+// Return type of temp sensor detected 
+#define TMP_MAX30205  1
 #define TMP_MLX90632  2
-#define TMP_MAX30205  0x01
+#define TMP_MLX90614  3
+
 
 unsigned int array[MAX];
 
@@ -190,6 +210,7 @@ const char *host_password = "Open@1234";
 const char DataPacketHeader[] = {CES_CMDIF_PKT_START_1, CES_CMDIF_PKT_START_2, CES_CMDIF_DATA_LEN_LSB, CES_CMDIF_DATA_LEN_MSB, CES_CMDIF_TYPE_DATA};
 const char DataPacketFooter[] = {CES_CMDIF_PKT_STOP_1, CES_CMDIF_PKT_STOP_2};
 
+// Pointers to Bluetooth variables 
 BLEServer *pServer = NULL;
 BLECharacteristic *Heartrate_Characteristic = NULL;
 BLECharacteristic *sp02_Characteristic = NULL;
@@ -199,16 +220,20 @@ BLECharacteristic *temperature_Characteristic = NULL;
 BLECharacteristic *hist_Characteristic = NULL;
 BLECharacteristic *hrv_Characteristic = NULL;
 
-ads1292r ADS1292R;                             // define class ads1292r
-ads1292r_processing ECG_RESPIRATION_ALGORITHM; // define class ecg_algorithm
-AFE4490 afe4490;
-MAX30205 tempSensor;
-Protocentral_MLX90632 mlx90632;
-spo2_algorithm spo2;
+// Instances of peripheral classes 
+// ECG Frontend
+ads1292r ADS1292R;                             
+ads1292r_processing ECG_RESPIRATION_ALGORITHM; 
 ads1292r_data ads1292r_raw_data;
+// Oximeter
+AFE4490 afe4490;
+spo2_algorithm spo2;
 afe44xx_data afe44xx_raw_data;
-
-//Respiration rate calculation
+// Temp sensors - contact
+MAX30205 tempSensor;
+// IR temp sensors 
+Protocentral_MLX90632 mlx90632;
+Adafruit_MLX90614 mlx90614;
 
 #define RESP_BUFFER_SIZE 2048 //128*10 secs
 
@@ -266,15 +291,20 @@ class MyCallbackHandler : public BLECharacteristicCallbacks
   }
 };
 
-
+// Get temperature 
 float readTempData(void){
 
   if(temperatureSensor == TMP_MAX30205){
     return (tempSensor.getTemperature());
-  }else if(temperatureSensor == TMP_MLX90632){
+  }
+  else if(temperatureSensor == TMP_MLX90632){
    return ( mlx90632.getSensorTemp());
   }
-
+  else if(temperatureSensor == TMP_MLX90614){
+      double temp = mlx90614.readObjectTempC();
+      return (float(temp));
+  }
+  
   Serial.println("unable to read temperature ");
   return 0xffff;
 }
@@ -303,7 +333,13 @@ bool scanAvailableTempSensors(void){
     temperatureSensor = TMP_MLX90632;
     return true;
   }
+  
+  Wire.beginTransmission (MLX90614_I2CADDR);
+  if(Wire.endTransmission () == 0){
 
+    temperatureSensor = TMP_MLX90614;
+    return true;
+  }
   return false;
 }
 
@@ -1313,7 +1349,7 @@ void HealthyPiV4_Webserver_Init()
 void setup()
 {
   delay(2000);
-  Serial.begin(115200); // Baudrate for serial communication
+  Serial.begin(9600); // Baudrate for serial communication
   Serial.println("Setting up Healthy pI V4...");
 
   // initalize the  data ready and chip select pins:
@@ -1407,12 +1443,21 @@ void setup()
   if(scanAvailableTempSensors()){
     if(temperatureSensor == TMP_MLX90632){
       mlx90632.begin();
-    }else if(temperatureSensor = TMP_MAX30205){
+      Serial.println("MLX90632 active");
+      }
+    else if(temperatureSensor = TMP_MAX30205){
       tempSensor.begin();
+      Serial.println("MAX30205 active");      
     }
-  }else{
+    else if(temperatureSensor = TMP_MLX90614){
+      mlx90614.begin();
+      Serial.println("MLX90614 active");
+      }
+    }
+    else{
     Serial.println("Couldn't find temperature sensor !!");
-  }
+    }
+    
 
   Serial.println("Initialization is complete");
 }
