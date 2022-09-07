@@ -4,9 +4,7 @@ HealthyPi v4 is a HAT for the Raspberry Pi, as well as a standalone device that 
 This fork is developing the system as a standalone device that can be used in a Remote Medical assessment setting where there are no or limited local staff.
 The data can be transferred via Bluetooth (BLE), Wifi or USB.
 Author Richard Hosking 
-richardh@iinet.net.au 
 
-![HealthyPi Display](docs/images/HealthyPi_Complete.jpg)
 
 HealthyPi v4 measures the following parameters in real-time:
 
@@ -15,7 +13,7 @@ HealthyPi v4 measures the following parameters in real-time:
 * Pulse oximetry (SPO₂)
 * Body temperature using a no contact InfraRed (IR) thermometer
 
-HealthyPi 4 is affordable and accessible and the open source aspect means that it’s easy to expand upon.
+HealthyPi 4 is open source which means that it’s easy to expand upon.
 
 You can now purchase the [HealthyPi v4 HAT Kit from Crowd Supply](https://www.crowdsupply.com/protocentral/healthypi-v4-unplugged)
 
