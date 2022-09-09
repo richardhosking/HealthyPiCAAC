@@ -66,6 +66,8 @@
 #define HRV_CHARACTERISTIC_UUID "cd5ca86f-4448-7db8-ae4c-d1da8cba36d0"
 #define HIST_CHARACTERISTIC_UUID "cd5c1525-4448-7db8-ae4c-d1da8cba36d0"
 
+// Serial port data rate
+#define SERIAL_BAUDRATE 9600
 
 #define BLE_MODE 0X01
 #define WEBSERVER_MODE 0X02
@@ -79,7 +81,7 @@
 #define CES_CMDIF_PKT_STOP_2 0x0B
 #define PUSH_BUTTON 17
 #define SLIDE_SWITCH 16
-#define MAX30205_READ_INTERVAL 10000
+#define TEMP_READ_INTERVAL 1000
 #define LINELEN 34
 #define HISTGRM_DATA_SIZE 12 * 4
 #define HISTGRM_CALC_TH 10
@@ -136,8 +138,8 @@ volatile uint8_t global_HeartRate_prev = 0;
 volatile uint8_t global_RespirationRate = 0;
 volatile uint8_t global_RespirationRate_prev = 0;
 volatile uint8_t npeakflag = 0;
-volatile long time_count = 0;
-volatile long hist_time_count = 0;
+volatile long temp_read_timer = 0;
+volatile long hist_temp_read_timer = 0;
 volatile bool histgrm_ready_flag = false;
 volatile unsigned int RR;
 
@@ -161,7 +163,9 @@ int16_t ecg_wave_sample, ecg_filterout;
 int16_t res_wave_sample, resp_filterout;
 
 uint32_t hr_histgrm[HISTGRM_DATA_SIZE];
-int temperatureSensor = SENSOR_NOTFOUND;
+
+// Flag for presence of Temp sensor 
+bool temperatureSensor = false;
 
 bool deviceConnected = false;
 bool oldDeviceConnected = false;
@@ -294,54 +298,10 @@ class MyCallbackHandler : public BLECharacteristicCallbacks
 // Get temperature 
 float readTempData(void){
 
-  if(temperatureSensor == TMP_MAX30205){
-    return (tempSensor.getTemperature());
-  }
-  else if(temperatureSensor == TMP_MLX90632){
-   return ( mlx90632.getSensorTemp());
-  }
-  else if(temperatureSensor == TMP_MLX90614){
       double temp = mlx90614.readObjectTempC();
       return (float(temp));
-  }
-  
-  Serial.println("unable to read temperature ");
-  return 0xffff;
 }
 
-bool scanAvailableTempSensors(void){
-
-  Wire.beginTransmission (MAX30205_ADDRESS1);
-  if (Wire.endTransmission () == 0){
-    tempSensor.max30205Address = MAX30205_ADDRESS1;
-    temperatureSensor = TMP_MAX30205;
-
-    return true;
-  }
-
-  Wire.beginTransmission (MAX30205_ADDRESS2);
-  if(Wire.endTransmission () == 0){
-    tempSensor.max30205Address = MAX30205_ADDRESS2;
-    temperatureSensor = TMP_MAX30205;
-
-    return true;
-  }
-
-  Wire.beginTransmission (MLX90632_ADDRESS);
-  if(Wire.endTransmission () == 0){
-
-    temperatureSensor = TMP_MLX90632;
-    return true;
-  }
-  
-  Wire.beginTransmission (MLX90614_I2CADDR);
-  if(Wire.endTransmission () == 0){
-
-    temperatureSensor = TMP_MLX90614;
-    return true;
-  }
-  return false;
-}
 
 String processor(const String &var)
 {
@@ -1348,8 +1308,12 @@ void HealthyPiV4_Webserver_Init()
 
 void setup()
 {
-  delay(2000);
-  Serial.begin(9600); // Baudrate for serial communication
+  // Wait for Serial port to open 
+  // Sketch will hang if not working
+  Serial.begin(SERIAL_BAUDRATE);
+  while(!Serial){
+      } 
+  
   Serial.println("Setting up Healthy pI V4...");
 
   // initalize the  data ready and chip select pins:
@@ -1366,6 +1330,7 @@ void setup()
   pinMode(SLIDE_SWITCH, OUTPUT);
   pinMode(PUSH_BUTTON, INPUT);
   int buttonState = digitalRead(SLIDE_SWITCH);
+  Serial.print("Slide switch :");
   Serial.println(buttonState);
 
   if (!SPIFFS.begin())
@@ -1438,26 +1403,20 @@ void setup()
   delay(10);
 
   attachInterrupt(digitalPinToInterrupt(ADS1292_DRDY_PIN), ads1292r_interrupt_handler, FALLING); // Digital2 is attached to Data ready pin of AFE is interrupt0 in ARduino
-
+  
+  // Start I2C bus
   Wire.begin(25, 22);
-  if(scanAvailableTempSensors()){
-    if(temperatureSensor == TMP_MLX90632){
-      mlx90632.begin();
-      Serial.println("MLX90632 active");
-      }
-    else if(temperatureSensor = TMP_MAX30205){
-      tempSensor.begin();
-      Serial.println("MAX30205 active");      
-    }
-    else if(temperatureSensor = TMP_MLX90614){
-      mlx90614.begin();
-      Serial.println("MLX90614 active");
-      }
-    }
-    else{
-    Serial.println("Couldn't find temperature sensor !!");
-    }
-    
+  
+  // Check for Temp sensor
+  Wire.beginTransmission(MLX90614_I2CADDR);  
+  if(Wire.endTransmission () == 0){
+    mlx90614.begin();
+    Serial.println("MLX90614 active");
+    temperatureSensor = true;
+   }
+   else{
+       Serial.println("MLX90614 not found");
+   }
 
   Serial.println("Initialization is complete");
 }
@@ -1622,19 +1581,22 @@ void loop()
 
     SPI.setDataMode(SPI_MODE1);
 
-    if ((time_count++ * (1000 / SAMPLING_RATE)) > MAX30205_READ_INTERVAL )
+    if ((temp_read_timer++ * (1000 / SAMPLING_RATE)) > TEMP_READ_INTERVAL )
     {
-      if(temperatureSensor != SENSOR_NOTFOUND ){
-        temp = readTempData() * 100; // read temperature for every 100ms
-        temperature = (uint16_t)temp;
-        DataPacket[12] = (uint8_t)temperature;
-        DataPacket[13] = (uint8_t)(temperature >> 8);
-        temp_data_ready = true;
-      }else scanAvailableTempSensors();
-
-      time_count = 0;
+      if(temperatureSensor = true){
+          temp = readTempData(); // read temperature for every 100ms
+          temp_data_ready = true;
+      }
+      else{
+          temp = 0;
+      }
+      temperature = (uint16_t)temp*100;
+      DataPacket[12] = (uint8_t)temperature;
+      DataPacket[13] = (uint8_t)(temperature >> 8);
+      
       //reading the battery with same interval as temp sensor
       read_battery_value();
+      temp_read_timer = 0;
     }
 
     if (Healthypi_Mode == BLE_MODE)
