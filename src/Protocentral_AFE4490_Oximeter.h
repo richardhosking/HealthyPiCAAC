@@ -74,9 +74,13 @@
 #define LED1ABSVAL    0x2f
 #define DIAG          0x30
 
+// Myhack - change length of variables from int_32_t to uint8_t
+// Dont need 32 bits to store HR 0-250
+// or sats 0-100
+
 typedef struct afe44xx_Record{
-  int32_t heart_rate;
-  int32_t spo2;
+  uint8_t heart_rate;
+  uint8_t spo2;
   signed long IR_data;
   signed long RED_data;
   boolean buffer_count_overflow = false;

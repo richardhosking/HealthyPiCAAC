@@ -4,6 +4,7 @@
 static  int32_t an_x[ BUFFER_SIZE];
 static  int32_t an_y[ BUFFER_SIZE];
 
+// Lookup table to calculate spO2
 const uint8_t uch_spo2_table[184]={ 95, 95, 95, 96, 96, 96, 97, 97, 97, 97, 97, 98, 98, 98, 98, 98, 99, 99, 99, 99,
                                     99, 99, 99, 99, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100,
                                    100, 100, 100, 100, 99, 99, 99, 99, 99, 99, 99, 99, 98, 98, 98, 98, 98, 98, 97, 97,
@@ -14,6 +15,32 @@ const uint8_t uch_spo2_table[184]={ 95, 95, 95, 96, 96, 96, 97, 97, 97, 97, 97, 
                                     49, 48, 47, 46, 45, 44, 43, 42, 41, 40, 39, 38, 37, 36, 35, 34, 33, 31, 30, 29,
                                     28, 27, 26, 25, 23, 22, 21, 20, 19, 17, 16, 15, 14, 12, 11, 10, 9, 7, 6, 5,
                                     3,   2,  1  } ;
+
+
+/*******************************************************
+ * Calculate SpO2 Function - commented to understand it!
+ * 
+ * Variables passed to function 
+ * uint16_t *pun_ir_buffer    pointer to IR buffer
+ * int32_t n_ir_buffer_length
+ * uint16_t *pun_red_buffer   pointer to Red buffer 
+ * int32_t *pn_spo2           Pointer to O2 result
+ * int8_t *pch_spo2_valid     pointer to Flag to indicate valid spO2
+ * int32_t *pn_heart_rate     pointer to heart rate
+ * int8_t *pch_hr_valid       Pointer to HR valid flag
+ * 
+ * Algorithm
+ * sum buffer => average = DC offset
+ * subtract DC offset and invert results 
+ * 4 point oving average to remove noise 
+ * calculate average of buffer again and use this as a threshold 
+ * n_th1
+ * set threshold at max and in limits 30-60
+ * 
+ * an_ir_valley_locs
+ * array of 15 32 bit nos to store locations of valleys (peaks)
+ * 
+*/
 
 void spo2_algorithm :: estimate_spo2(uint16_t *pun_ir_buffer, int32_t n_ir_buffer_length, uint16_t *pun_red_buffer, int32_t *pn_spo2, int8_t *pch_spo2_valid, int32_t *pn_heart_rate, int8_t *pch_hr_valid)
 {
@@ -72,24 +99,36 @@ void spo2_algorithm :: estimate_spo2(uint16_t *pun_ir_buffer, int32_t n_ir_buffe
     n_th1=60; // max allowed
   }
 
+// Set all valley locations to 0 
   for ( k=0 ; k<15;k++)
   {
     an_ir_valley_locs[k]=0;
   }
 
   // since we flipped signal, we use peak detector as valley detector
-  find_peak( an_ir_valley_locs, &n_npks, an_x, BUFFER_SIZE, n_th1, 4, 15 );//peak_height, peak_distance, max_num_peaks
+  // Minimum peak height is n_th1 (threshold)
+  // Min distance between peaks is 4 samples (how are samples timed?)
+  // Max number of peaks for calculation is 15
+  // find_peak is main function - it calls a number of subfunctions
+  // n_pks is number of peaks found
+  // an_ir_valley_locs is array of 15 32 bit nos to store locations of valleys (peaks)
+    
+  find_peak( an_ir_valley_locs, &n_npks, an_x, BUFFER_SIZE, n_th1, 4, 15 );  //peak_height, peak_distance, max_num_peaks
   n_peak_interval_sum =0;
 
   if (n_npks>=2)
   {
-
+    // Calculate the average distance between peaks n_peak_interval_sum 
     for (k=1; k<n_npks; k++)
     {
       n_peak_interval_sum += (an_ir_valley_locs[k] -an_ir_valley_locs[k -1] ) ;
     }
 
     n_peak_interval_sum =n_peak_interval_sum/(n_npks-1);
+    
+    // Calculate Heart Rate from oximeter
+    // SF_spO2 is the sampling frequency for oximeter #DEFINE in spo2_algorithm.h 
+    // Set at 25 (?samples/sec)
     *pn_heart_rate =(int32_t)( (SF_spo2*60)/ n_peak_interval_sum );
     *pch_hr_valid  = 1;
   }
@@ -132,7 +171,7 @@ void spo2_algorithm :: estimate_spo2(uint16_t *pun_ir_buffer, int32_t n_ir_buffe
 
   }
   // find max between two valley locations
-  // and use an_ratio betwen AC compoent of Ir & Red and DC compoent of Ir & Red for SPO2
+  // and use an_ratio betwen AC component of Ir & Red and DC compoent of Ir & Red for SPO2
   for (k=0; k< n_exact_ir_valley_locs_count-1; k++)
   {
     n_y_dc_max= -16777216 ;
@@ -166,7 +205,7 @@ void spo2_algorithm :: estimate_spo2(uint16_t *pun_ir_buffer, int32_t n_ir_buffe
 
         if (n_denom>0  && n_i_ratio_count <5 &&  n_nume != 0)
         {
-          an_ratio[n_i_ratio_count]= (n_nume*100)/n_denom ; //formular is ( n_y_ac *n_x_dc_max) / ( n_x_ac *n_y_dc_max) ;
+          an_ratio[n_i_ratio_count]= (n_nume*100)/n_denom ; //formula is ( n_y_ac *n_x_dc_max) / ( n_x_ac *n_y_dc_max) ;
           n_i_ratio_count++;
         }
 
@@ -204,6 +243,7 @@ void spo2_algorithm :: estimate_spo2(uint16_t *pun_ir_buffer, int32_t n_ir_buffe
 void spo2_algorithm :: find_peak( int32_t *pn_locs, int32_t *n_npks,  int32_t  *pn_x, int32_t n_size, int32_t n_min_height, int32_t n_min_distance, int32_t n_max_num )
 /**
   \brief        Find peaks
+  \variables    int32_t *pn_locs 
   \par          Details
                 Find at most MAX_NUM peaks above MIN_HEIGHT separated by at least MIN_DISTANCE
 

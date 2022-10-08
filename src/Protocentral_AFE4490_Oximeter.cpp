@@ -51,6 +51,13 @@ const uint8_t uch_spo2_table[184]={ 95, 95, 95, 96, 96, 96, 97, 97, 97, 97, 97, 
 
 spo2_algorithm Spo2;
 
+/**
+ * Main Oximeter function
+ * Passes a pointer to typedef struct of Type afe44xx_data
+ * afe44xx_data *afe44xx_raw_data
+ * 
+ */ 
+
 boolean AFE4490 :: get_AFE4490_Data (afe44xx_data *afe44xx_raw_data,const int chip_select,const int data_ready)
 {
   afe44xxWrite(CONTROL0, 0x000001,chip_select);
@@ -74,10 +81,18 @@ boolean AFE4490 :: get_AFE4490_Data (afe44xx_data *afe44xx_raw_data,const int ch
   }
 
   dec++;
-
+   // When Buffer has data 
   if (n_buffer_count > 99)
   {
+    // Call Routine to estimate spO2 and heart rate 
+    // Pass:
+    // IR buffer 
+    // Buffer length = 100
+    // Red buffer
+    // Addresses of pO2 sats, pO2 sats flag, Heart rate, heart rate flag  
+      
     Spo2.estimate_spo2(aun_ir_buffer, 100, aun_red_buffer, &n_spo2, &ch_spo2_valid, &n_heart_rate, &ch_hr_valid);
+    // move data from variables into the struct afe44xx_raw_data
     afe44xx_raw_data->spo2 = n_spo2;
     afe44xx_raw_data->heart_rate = n_heart_rate;
     n_buffer_count = 0;
@@ -88,6 +103,7 @@ boolean AFE4490 :: get_AFE4490_Data (afe44xx_data *afe44xx_raw_data,const int ch
   return true;
 }
 
+// Same Function without pin selects 
 boolean AFE4490 :: get_AFE4490_Data (afe44xx_data *afe44xx_raw_data)
 {
   afe44xxWrite(CONTROL0, 0x000001);

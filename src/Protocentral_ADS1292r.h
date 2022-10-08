@@ -60,7 +60,7 @@ void ads1292r_interrupt_handler(void);
 class ads1292r
 {
   public:
-    boolean getAds1292r_Data_if_Available(const int data_ready,const int chip_select,ads1292r_data * data_struct);
+    bool getAds1292r_Data_if_Available(const int data_ready,const int chip_select,ads1292r_data * data_struct);
     static void ads1292_Init(const int chip_select,const int pwdn_pin,const int start_pin);
     static void ads1292_Init();
     static void ads1292_Reset(const int pwdn_pin);

@@ -33,11 +33,12 @@
 #include "Protocentral_ADS1292r.h"
 #include "Protocentral_ecg_resp_signal_processing.h"
 #include "Protocentral_AFE4490_Oximeter.h"
-// Contact Thermometer
-#include "Protocentral_MAX30205.h"
 #include "Protocentral_spo2_algorithm.h"
+// Contact Thermometer
+//#include "Protocentral_MAX30205.h"
 // IR Thermometer - not supplied with kit 
-#include "Protocentral_MLX90632.h"
+//#include "Protocentral_MLX90632.h"
+
 // New library IR Thermometer
 #include "Adafruit_MLX90614.h"
 
@@ -67,18 +68,25 @@
 #define HIST_CHARACTERISTIC_UUID "cd5c1525-4448-7db8-ae4c-d1da8cba36d0"
 
 // Serial port data rate
-#define SERIAL_BAUDRATE 9600
+#define SERIAL_BAUDRATE 115200
 
+// Board Modes
 #define BLE_MODE 0X01
 #define WEBSERVER_MODE 0X02
 #define V3_MODE 0X03
+
+// Data Packet defines start/stop and length Bytes
 #define CES_CMDIF_PKT_START_1 0x0A
 #define CES_CMDIF_PKT_START_2 0xFA
-#define CES_CMDIF_DATA_LEN_LSB 20
+#define CES_CMDIF_DATA_LEN_LSB 20   // 20 bytes of actual data
 #define CES_CMDIF_DATA_LEN_MSB 0
 #define CES_CMDIF_TYPE_DATA 0x02
 #define CES_CMDIF_PKT_STOP_1 0x00
 #define CES_CMDIF_PKT_STOP_2 0x0B
+const char DataPacketHeader[] = {CES_CMDIF_PKT_START_1, CES_CMDIF_PKT_START_2, CES_CMDIF_DATA_LEN_LSB, CES_CMDIF_DATA_LEN_MSB, CES_CMDIF_TYPE_DATA};
+const char DataPacketFooter[] = {CES_CMDIF_PKT_STOP_1, CES_CMDIF_PKT_STOP_2};
+
+// Misc defines 
 #define PUSH_BUTTON 17
 #define SLIDE_SWITCH 16
 #define TEMP_READ_INTERVAL 1000
@@ -89,11 +97,6 @@
 #define PPG_DATA 0X00
 #define RESP_DATA 0X01
 #define SENSOR_NOTFOUND 0xffff
-
-// Return type of temp sensor detected 
-#define TMP_MAX30205  1
-#define TMP_MLX90632  2
-#define TMP_MLX90614  3
 
 
 unsigned int array[MAX];
@@ -211,8 +214,7 @@ const int ledChannel = 0;
 const int resolution = 8;
 const char *host = "Healthypi_v4";
 const char *host_password = "Open@1234";
-const char DataPacketHeader[] = {CES_CMDIF_PKT_START_1, CES_CMDIF_PKT_START_2, CES_CMDIF_DATA_LEN_LSB, CES_CMDIF_DATA_LEN_MSB, CES_CMDIF_TYPE_DATA};
-const char DataPacketFooter[] = {CES_CMDIF_PKT_STOP_1, CES_CMDIF_PKT_STOP_2};
+
 
 // Pointers to Bluetooth variables 
 BLEServer *pServer = NULL;
@@ -226,21 +228,48 @@ BLECharacteristic *hrv_Characteristic = NULL;
 
 // Instances of peripheral classes 
 // ECG Frontend
-ads1292r ADS1292R;                             
-ads1292r_processing ECG_RESPIRATION_ALGORITHM; 
+ads1292r ADS1292R;
+
+// Instance of respiration calculation algorithm    
+ads1292r_processing ECG_RESPIRATION_ALGORITHM;
+
+/*/ Instance of
+ * data structure
+ * 
+typedef struct ads1292r_Record{
+  signed long raw_ecg;
+  signed long raw_resp;
+  uint32_t status_reg;
+}ads1292r_data; 
+* 
+// in ADS1292 header file 
+*/
 ads1292r_data ads1292r_raw_data;
+
 // Oximeter
 AFE4490 afe4490;
+// spO2 calculation algorithm
 spo2_algorithm spo2;
+
+/** Struct containing Oximeter output data 
+ * typedef struct afe44xx_Record{
+ * int32_t heart_rate;
+ * int32_t spo2;
+ * signed long IR_data;
+ * signed long RED_data;
+ * boolean buffer_count_overflow = false;
+ * }afe44xx_data;
+ */
 afe44xx_data afe44xx_raw_data;
+
 // Temp sensors - contact
-MAX30205 tempSensor;
+//MAX30205 tempSensor;
 // IR temp sensors 
-Protocentral_MLX90632 mlx90632;
+//Protocentral_MLX90632 mlx90632;
 Adafruit_MLX90614 mlx90614;
 
+// Variables for Respiration algorithm 
 #define RESP_BUFFER_SIZE 2048 //128*10 secs
-
 int16_t resp_buffer[RESP_BUFFER_SIZE];
 uint16_t resp_buffer_counter = 0;
 
@@ -257,7 +286,7 @@ double vImag[RESP_BUFFER_SIZE];
 const double samplingFrequency = 128;
 const uint16_t samples = RESP_BUFFER_SIZE; //This value MUST ALWAYS be a power of 2
 
-
+// Interrupt service routines 
 class MyServerCallbacks : public BLEServerCallbacks
 {
   void onConnect(BLEServer *pServer)
@@ -314,6 +343,9 @@ String processor(const String &var)
   return String();
 }
 
+// Webserver related functions //////////////////////////////////////////////////////////
+
+// Instance of WebServer Class 
 WebServer server(80);
 
 void handleWebRequests()
@@ -388,6 +420,8 @@ void handletemperature()
   server.send(200, "text/html", sensor_data); //Send ADC value only to client ajax request
 }
 
+// End Webserver functions /////////////////////////////////////////////////////////////////////////////
+
 void push_button_intr_handler()
 {
 
@@ -408,6 +442,9 @@ void slideswitch_intr_handler()
     slide_switch_flag = true;
   }
 }
+
+
+// SPIFFS file functions? ///////////////////////////////////////////////////////
 
 void delLine(fs::FS &fs, const char *path, uint32_t line, const int char_to_delete)
 {
@@ -567,6 +604,10 @@ void readFile(fs::FS &fs, const char *path, int *data_count, char *file_data)
   file.close();
   Serial.println("file closed");
 }
+
+// End file functions ///////////////////////////////////////////////////////////////
+
+// Bluetooth BLE functions //////////////////////////////////////////////////////////
 
 void HealthyPiV4_BLE_Init()
 {
@@ -900,7 +941,7 @@ float rmssd_ff(unsigned int array[])
   return rmssd;
 }
 
-//Led_indications
+//Led_indications /////////////////////////////////////////////////////////////////////////////
 void ble_advertising()
 {
 
@@ -984,6 +1025,8 @@ void OTA_update_indication()
     digitalWrite(A13, HIGH);
   }
 }
+
+// end LED Indications//////////////////////////////////////////////////////////////////////
 
 void send_data_serial_port(void)
 {
@@ -1423,6 +1466,9 @@ void setup()
 
 void loop()
 {
+  // Get raw data from ADS1292
+  // Store in ads1292r_raw_data which is a struct in the ADS1292R class 
+  // format 
   boolean ret = ADS1292R.getAds1292r_Data_if_Available(ADS1292_DRDY_PIN, ADS1292_CS_PIN, &ads1292r_raw_data);
 
   if (ret == true)
@@ -1535,11 +1581,14 @@ void loop()
       }
 
       DataPacket[14] = global_RespirationRate;
-      DataPacket[16] = global_HeartRate;
+      // to Use the oximeter as the source for Heart rate, comment out next line 
+      DataPacket[16] = global_HeartRate;    
     }
-
+    
+    // Now copy ECG data stream to the serial packet
     memcpy(&DataPacket[0], &ecg_filterout, 2);
     memcpy(&DataPacket[2], &resp_filterout, 2);
+
     SPI.setDataMode(SPI_MODE0);
     afe4490.get_AFE4490_Data(&afe44xx_raw_data, AFE4490_CS_PIN, AFE4490_DRDY_PIN);
     ppg_wave_ir = (int16_t)(afe44xx_raw_data.IR_data >> 8);
@@ -1567,16 +1616,20 @@ void loop()
       }
       else
       {
+        // Use AFE44xx Oximeter for source of Heart Rate data   
         DataPacket[15] = afe44xx_raw_data.spo2;
         sp02 = (uint8_t)afe44xx_raw_data.spo2;
+        // originally a 32 bit int - reduce to 8 
+        //DataPacket[16] = (uint8_t)afe44xx_raw_data.heart_rate;
       }
-
+      //DataPacket[16] = (uint8_t)afe44xx_raw_data.heart_rate;
       spo2_calc_done = true;
       afe44xx_raw_data.buffer_count_overflow = false;
     }
-
-    DataPacket[17] = 80;  //bpsys
-    DataPacket[18] = 120; //bp dia
+    
+    // Not Implemented 
+    DataPacket[17] = 80;  //Blood Pressure Placeholder Diastolic
+    DataPacket[18] = 120; //BP Systolic 
     DataPacket[19] = ads1292r_raw_data.status_reg;
 
     SPI.setDataMode(SPI_MODE1);
@@ -1590,9 +1643,12 @@ void loop()
       else{
           temp = 0;
       }
-      temperature = (uint16_t)temp*100;
+    
+      temperature = temp*100;
+
       DataPacket[12] = (uint8_t)temperature;
       DataPacket[13] = (uint8_t)(temperature >> 8);
+    
       
       //reading the battery with same interval as temp sensor
       read_battery_value();
